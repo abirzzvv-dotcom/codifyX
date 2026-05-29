@@ -1,45 +1,66 @@
-# [Project name]
+# TermuxHost
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A self-hosted app hosting platform. Backend runs on **Termux (Android)** via PM2 + Ngrok. Frontend is a static **React + Vite** site for **Vercel**.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `pnpm --filter @workspace/api-server run dev` — start the backend (reads from `/backend/server.js`)
+- `pnpm --filter @workspace/web run dev` — start the frontend preview
+- Backend installs its own deps from `/backend/package.json` on first run
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- **Backend** (`/backend`): Node.js + Express, Neon PostgreSQL, JWT, bcrypt, Nodemailer, Ngrok, PM2
+- **Frontend** (`/frontend` + `artifacts/web`): React + Vite, plain CSS, fetch API
+- pnpm workspaces for Replit preview wiring only
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `/backend/server.js` — main Express entry point
+- `/backend/src/routes/` — auth, projects, files, logs, ai, admin, ngrok
+- `/backend/src/services/` — email (Gmail SMTP), ngrok, pm2
+- `/backend/src/db.js` — Neon PostgreSQL schema + pool
+- `/backend/.env.example` — all required environment variables
+- `/frontend/` — standalone Vercel-deployable React app
+- `artifacts/web/src/` — TypeScript mirror of frontend for Replit preview
+- `TERMUX_SETUP.md` — full Termux setup guide
+- `VERCEL_DEPLOY.md` — Vercel deployment guide
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Backend is plain CommonJS (no TypeScript, no build step) for maximum Termux compatibility
+- `artifacts/api-server` runs `node ../../backend/server.js` directly — no separate entry point
+- Frontend uses `import.meta.env.VITE_API_URL || ""` fallback — empty string = relative URLs for Replit, full Ngrok URL for Vercel
+- No API keys, no CORS restrictions — security is purely the Ngrok URL being private
+- PM2 is used as a CLI tool (not as a module dep) — installed globally on Termux via `npm install -g pm2`
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Register/login with JWT auth + email verification
+- Create Node.js, Python, Discord bot, and API projects
+- Start/stop/restart projects via PM2
+- Install npm/pip packages from the UI
+- Browse and edit project files in-browser
+- View PM2 live logs and activity logs
+- AI assistant (NVIDIA Gemma 3n) that can debug, create, and edit files
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Frontend simplicity is a priority — plain CSS, minimal dependencies
+- Backend must run on Termux without Docker or Linux-only deps
+- Environment variables via `VITE_API_URL` for frontend, `.env` for backend
+- No hardcoded URLs anywhere
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Backend deps are in `/backend/node_modules` (not pnpm workspace) — run `npm install` in `/backend` on first setup
+- PM2 must be installed globally on Termux: `npm install -g pm2`
+- Ngrok free tier changes URL on restart — update `VITE_API_URL` in Vercel when it changes
+- `DATABASE_URL` must be set or the server starts with a warning and DB features fail
+- Gmail requires an App Password (not account password) for SMTP
 
 ## Pointers
 
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- See `TERMUX_SETUP.md` for full Termux + PM2 + Ngrok setup
+- See `VERCEL_DEPLOY.md` for deploying the frontend to Vercel
+- See `README.md` for full API endpoint reference
