@@ -21,16 +21,18 @@ async function initDB() {
         verified BOOLEAN NOT NULL DEFAULT false,
         suspended BOOLEAN NOT NULL DEFAULT false,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
+      )
+    `);
+    await client.query(`
       CREATE TABLE IF NOT EXISTS sessions (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         token TEXT UNIQUE NOT NULL,
         expires_at TIMESTAMPTZ NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
+      )
+    `);
+    await client.query(`
       CREATE TABLE IF NOT EXISTS verification_codes (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -38,8 +40,9 @@ async function initDB() {
         type VARCHAR(30) NOT NULL,
         expires_at TIMESTAMPTZ NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
+      )
+    `);
+    await client.query(`
       CREATE TABLE IF NOT EXISTS projects (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -51,8 +54,9 @@ async function initDB() {
         main_file VARCHAR(255) DEFAULT 'index.js',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
+      )
+    `);
+    await client.query(`
       CREATE TABLE IF NOT EXISTS logs (
         id SERIAL PRIMARY KEY,
         project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
@@ -60,16 +64,18 @@ async function initDB() {
         message TEXT NOT NULL,
         level VARCHAR(20) NOT NULL DEFAULT 'info',
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
+      )
+    `);
+    await client.query(`
       CREATE TABLE IF NOT EXISTS api_keys (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         key TEXT UNIQUE NOT NULL,
         name VARCHAR(100) NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
-
+      )
+    `);
+    await client.query(`
       CREATE TABLE IF NOT EXISTS ai_history (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -77,9 +83,11 @@ async function initDB() {
         role VARCHAR(20) NOT NULL,
         content TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
+      )
     `);
     console.log("[DB] Schema initialized");
+  } catch (err) {
+    console.error("[DB] Failed to initialize:", err.message);
   } finally {
     client.release();
   }

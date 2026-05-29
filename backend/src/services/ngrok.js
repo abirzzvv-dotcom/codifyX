@@ -9,11 +9,17 @@ async function startNgrok(port) {
     return null;
   }
   try {
-    await ngrok.authtoken(process.env.NGROK_AUTH_TOKEN);
-    currentUrl = await ngrok.connect({ addr: port, proto: "http" });
+    await ngrok.kill();
+  } catch (_) {}
+  try {
+    currentUrl = await ngrok.connect({
+      addr: port,
+      proto: "http",
+      authtoken: process.env.NGROK_AUTH_TOKEN,
+    });
     connected = true;
     console.log(`[Ngrok] Public URL: ${currentUrl}`);
-    ngrok.addListener("disconnect", async () => {
+    ngrok.addListener("disconnect", () => {
       connected = false;
       console.warn("[Ngrok] Disconnected — reconnecting in 5s...");
       setTimeout(() => reconnect(port), 5000);
@@ -28,7 +34,11 @@ async function startNgrok(port) {
 async function reconnect(port) {
   try {
     await ngrok.disconnect();
-    currentUrl = await ngrok.connect({ addr: port, proto: "http" });
+    currentUrl = await ngrok.connect({
+      addr: port,
+      proto: "http",
+      authtoken: process.env.NGROK_AUTH_TOKEN,
+    });
     connected = true;
     console.log(`[Ngrok] Reconnected: ${currentUrl}`);
   } catch (err) {
