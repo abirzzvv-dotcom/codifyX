@@ -1,29 +1,8 @@
 const { spawn, execSync } = require("child_process");
-const http = require("http");
 
 let currentUrl = null;
 let connected = false;
 let ngrokProcess = null;
-
-function queryNgrokApi() {
-  return new Promise((resolve, reject) => {
-    const req = http.get("http://localhost:4040/api/tunnels", { timeout: 3000 }, (res) => {
-      let data = "";
-      res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => {
-        try {
-          const body = JSON.parse(data);
-          const tunnel = (body.tunnels || []).find((t) => t.proto === "https");
-          resolve(tunnel ? tunnel.public_url : null);
-        } catch {
-          resolve(null);
-        }
-      });
-    });
-    req.on("error", () => resolve(null));
-    req.on("timeout", () => { req.destroy(); resolve(null); });
-  });
-}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -35,95 +14,103 @@ async function startNgrok(port) {
     return null;
   }
 
-  // Kill any stale ngrok processes
+  // Kill any existing ngrok http process cleanly
   try { execSync("pkill -f 'ngrok http'", { stdio: "ignore" }); } catch (_) {}
   await sleep(800);
 
   const env = {
     ...process.env,
+    // ngrok v3 reads NGROK_AUTHTOKEN (no underscore between AUTH and TOKEN)
     NGROK_AUTHTOKEN: process.env.NGROK_AUTH_TOKEN,
   };
 
-  ngrokProcess = spawn("ngrok", ["http", String(port), "--log=stdout", "--log-format=json"], {
+  // --log=stdout makes ngrok write structured log lines to stdout instead of
+  // opening an interactive TUI. The "started tunnel" line contains the URL.
+  ngrokProcess = spawn("ngrok", ["http", String(port), "--log=stdout"], {
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
-  const errorLines = [];
+  return new Promise((resolve) => {
+    let settled = false;
 
-  ngrokProcess.stdout.on("data", (data) => {
-    for (const raw of data.toString().split("\n")) {
-      const line = raw.trim();
-      if (!line) continue;
-      try {
-        const entry = JSON.parse(line);
-        const msg = entry.msg || "";
-        const lvl = (entry.lvl || entry.level || "").toLowerCase();
-        if (lvl === "error" || lvl === "crit") {
-          errorLines.push(msg || line);
-          console.error("[Ngrok]", msg || line);
-        } else if (msg.includes("started tunnel") || msg.includes("client session")) {
-          console.log("[Ngrok] Agent ready");
+    function finish(url) {
+      if (settled) return;
+      settled = true;
+      if (url) {
+        currentUrl = url;
+        connected = true;
+      }
+      resolve(url);
+    }
+
+    // Parse every line ngrok writes to stdout
+    let buffer = "";
+    ngrokProcess.stdout.on("data", (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split("\n");
+      buffer = lines.pop(); // keep incomplete last line
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        // Log the raw line so the user can see what ngrok is saying
+        console.log("[Ngrok]", line.trim());
+
+        // ngrok text format:  msg="started tunnel" url=https://xxxx.ngrok-free.app
+        // ngrok json format:  {"msg":"started tunnel","url":"https://..."}
+        const urlMatch =
+          line.match(/\burl=(https?:\/\/\S+)/) ||
+          line.match(/"url"\s*:\s*"(https?:\/\/[^"]+)"/) ||
+          line.match(/Forwarding\s+(https?:\/\/\S+)/);
+
+        if (urlMatch) {
+          console.log(`[Ngrok] Tunnel active: ${urlMatch[1]}`);
+          finish(urlMatch[1]);
         }
-      } catch {
-        if (line.includes("error") || line.includes("ERR")) {
-          errorLines.push(line);
-          console.error("[Ngrok]", line);
+
+        // Surface auth and connection errors immediately
+        if (/ERR_NGROK_\d+/.test(line) || /authentication failed/i.test(line)) {
+          const code = (line.match(/ERR_NGROK_(\d+)/) || [])[0] || "";
+          console.error(`[Ngrok] Auth/connection error ${code} — check NGROK_AUTH_TOKEN`);
+          finish(null);
         }
       }
-    }
-  });
+    });
 
-  ngrokProcess.stderr.on("data", (data) => {
-    const msg = data.toString().trim();
-    if (msg) {
-      errorLines.push(msg);
-      console.error("[Ngrok stderr]", msg);
-    }
-  });
+    ngrokProcess.stderr.on("data", (chunk) => {
+      const msg = chunk.toString().trim();
+      if (msg) console.error("[Ngrok stderr]", msg);
+    });
 
-  ngrokProcess.on("error", (err) => {
-    console.error("[Ngrok] Failed to spawn process:", err.message);
-    console.error("[Ngrok] Make sure ngrok is installed and in PATH");
-  });
+    ngrokProcess.on("error", (err) => {
+      console.error("[Ngrok] Could not start process:", err.message);
+      console.error("[Ngrok] Verify ngrok is in PATH: run `which ngrok`");
+      finish(null);
+    });
 
-  ngrokProcess.on("exit", (code, signal) => {
-    if (signal === "SIGTERM" || signal === "SIGKILL") return;
-    connected = false;
-    currentUrl = null;
-    if (code !== 0 && code !== null) {
-      console.warn(`[Ngrok] Exited with code ${code} — retrying in 15s`);
-      if (errorLines.length > 0) {
-        console.error("[Ngrok] Last errors:", errorLines.slice(-3).join(" | "));
+    ngrokProcess.on("exit", (code, signal) => {
+      if (signal === "SIGTERM" || signal === "SIGKILL") return;
+      if (!settled) {
+        console.error(`[Ngrok] Process exited (code=${code}) before tunnel was ready`);
+        finish(null);
+      } else if (code !== 0 && code !== null) {
+        connected = false;
+        currentUrl = null;
+        console.warn(`[Ngrok] Tunnel closed (code=${code}) — retrying in 15s`);
+        setTimeout(() => startNgrok(port), 15000);
       }
-      setTimeout(() => startNgrok(port), 15000);
-    }
+    });
+
+    // Hard timeout: if we haven't seen a URL after 60s, give up
+    setTimeout(() => {
+      if (!settled) {
+        console.error("[Ngrok] No tunnel URL seen after 60s");
+        console.error("[Ngrok] Tip: run `ngrok http " + port + "` manually and check for errors");
+        finish(null);
+      }
+    }, 60000);
   });
-
-  // Poll the ngrok local API until the tunnel is up (up to 45 seconds)
-  console.log("[Ngrok] Waiting for tunnel...");
-  for (let i = 0; i < 45; i++) {
-    await sleep(1000);
-
-    if (ngrokProcess.exitCode !== null && ngrokProcess.exitCode !== 0) {
-      console.error("[Ngrok] Process exited early — check auth token and ngrok installation");
-      return null;
-    }
-
-    const url = await queryNgrokApi();
-    if (url) {
-      currentUrl = url;
-      connected = true;
-      console.log(`[Ngrok] Tunnel active: ${url}`);
-      return url;
-    }
-  }
-
-  console.error("[Ngrok] Timed out after 45s waiting for tunnel");
-  if (errorLines.length > 0) {
-    console.error("[Ngrok] Errors seen:", errorLines.slice(-5).join(" | "));
-  }
-  return null;
 }
 
 function stopNgrok() {
