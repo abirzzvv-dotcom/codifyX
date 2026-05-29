@@ -1,23 +1,14 @@
 # Termux Setup Guide
 
-This guide walks you through turning your Android device into a backend server running TermuxHost.
-
----
-
-## Prerequisites
-
-- Android device (Android 7+)
-- Termux installed from **[F-Droid](https://f-droid.org/packages/com.termux/)** — do **not** use the Play Store version, it is outdated
-- A [Neon](https://neon.tech) account (free PostgreSQL)
-- A [Ngrok](https://ngrok.com) account (free tunnel)
-- A [build.nvidia.com](https://build.nvidia.com) API key (free, for AI features)
+This guide turns your Android phone into a backend server running TermuxHost. Follow every step in order.
 
 ---
 
 ## Step 1 — Install Termux from F-Droid
 
-1. Open F-Droid → search "Termux" → install
-2. Open Termux
+Download from **[F-Droid](https://f-droid.org/packages/com.termux/)** — do **not** use the Play Store version, it is outdated and broken.
+
+Open Termux after installing.
 
 ---
 
@@ -29,7 +20,29 @@ pkg update && pkg upgrade -y
 
 ---
 
-## Step 3 — Install Node.js and Git
+## Step 3 — Fix DNS (critical — do this before anything else)
+
+Termux sometimes ships with a broken DNS config that points at `[::1]:53` (localhost) instead of a real nameserver. This causes ngrok and other network tools to fail with "connection refused" DNS errors even when your internet works fine.
+
+**Fix it now before you hit the issue:**
+
+```bash
+echo "nameserver 8.8.8.8" > $PREFIX/etc/resolv.conf
+echo "nameserver 8.8.4.4" >> $PREFIX/etc/resolv.conf
+```
+
+Verify DNS works:
+
+```bash
+ping -c 2 google.com
+# Should print ping replies, not "Name or service not known"
+```
+
+If ping works, you're good. This fix persists across Termux restarts.
+
+---
+
+## Step 4 — Install Node.js and Git
 
 ```bash
 pkg install nodejs git -y
@@ -45,28 +58,23 @@ git --version
 
 ---
 
-## Step 4 — Install PM2 globally
+## Step 5 — Install PM2
 
-PM2 keeps your projects running and auto-restarts them on crash.
+PM2 keeps your projects running and restarts them on crash.
 
 ```bash
 npm install -g pm2
-```
-
-Verify:
-
-```bash
-pm2 --version
+pm2 --version   # verify
 ```
 
 ---
 
-## Step 4b — Install the ngrok binary
+## Step 6 — Install the ngrok binary
 
-The backend spawns `ngrok` as a CLI command — **do not** use `npm install ngrok`. Instead install the real binary:
+The backend spawns ngrok as a CLI process. Install the real ARM binary — **do not** `npm install ngrok`.
 
+**Most phones (64-bit ARM):**
 ```bash
-# Download the ARM64 binary (most modern Android devices)
 cd ~
 curl -o ngrok.tgz https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz
 tar xzf ngrok.tgz
@@ -75,20 +83,24 @@ chmod +x $PREFIX/bin/ngrok
 rm ngrok.tgz
 ```
 
-If your device is 32-bit ARM:
+**Older phones (32-bit ARM):**
 ```bash
+cd ~
 curl -o ngrok.tgz https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm.tgz
+tar xzf ngrok.tgz
+mv ngrok $PREFIX/bin/ngrok
+chmod +x $PREFIX/bin/ngrok
+rm ngrok.tgz
 ```
 
 Verify:
 ```bash
-ngrok version
-# ngrok version 3.x.x
+ngrok version   # should print: ngrok version 3.x.x
 ```
 
 ---
 
-## Step 5 — (Optional) Install Python
+## Step 7 — (Optional) Install Python
 
 Only needed if you want to host Python projects.
 
@@ -99,133 +111,155 @@ pip install --upgrade pip
 
 ---
 
-## Step 6 — Get the backend onto your device
+## Step 8 — Get the backend onto your device
 
 **Option A — Clone from GitHub:**
-
 ```bash
-git clone https://github.com/YOUR_USERNAME/termuxhost.git
-cd termuxhost/backend
+git clone https://github.com/YOUR_USERNAME/codifyX.git
+cd codifyX/backend
 ```
 
 **Option B — Copy the `/backend` folder manually** using a file manager or `adb push`.
 
 ---
 
-## Step 7 — Install Node dependencies
+## Step 9 — Install Node dependencies
 
 ```bash
-cd ~/termuxhost/backend   # or wherever your backend folder is
+cd ~/codifyX/backend
 npm install
 ```
 
 ---
 
-## Step 8 — Create your `.env` file
+## Step 10 — Create your `.env` file
 
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-Fill in the values:
+Fill in every value:
 
 ```env
-# Database — get this from neon.tech → your project → Connection string
+# ── Database ────────────────────────────────────────────────────────────────
+# Get from: neon.tech → your project → Connection string → Node.js
 DATABASE_URL=postgresql://user:password@ep-xxx.neon.tech/neondb?sslmode=require
 
-# Auth — generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# ── Auth ─────────────────────────────────────────────────────────────────────
+# Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 JWT_SECRET=your-long-random-secret-here
 JWT_EXPIRES_IN=7d
 
-# Server
+# ── Server ───────────────────────────────────────────────────────────────────
 PORT=3001
 PROJECTS_ROOT=./data/projects
 
-# Ngrok — get from dashboard.ngrok.com
+# ── Ngrok ────────────────────────────────────────────────────────────────────
+# Get from: dashboard.ngrok.com → Your Authtoken
 NGROK_AUTH_TOKEN=your_ngrok_authtoken_here
 
-# NVIDIA AI — get from build.nvidia.com
+# ── NVIDIA AI (optional) ─────────────────────────────────────────────────────
+# Get from: build.nvidia.com → Get API Key
 NVIDIA_API_KEY=nvapi-xxxxxxxxxxxx
 
-# Gmail SMTP — use an App Password, not your account password
+# ── Gmail SMTP (optional) ────────────────────────────────────────────────────
+# Use an App Password — NOT your account password
 # Google Account → Security → 2-Step Verification → App passwords
 EMAIL_USER=youremail@gmail.com
 EMAIL_PASS=xxxx xxxx xxxx xxxx
 ```
 
-Save with `Ctrl+O`, exit with `Ctrl+X`.
+Save: `Ctrl+O` then `Ctrl+X`.
 
 ---
 
-## Step 9 — Configure Ngrok auth
+## Step 11 — Run the setup checker
 
-The server spawns the `ngrok` binary automatically — no separate setup needed. Just make sure `NGROK_AUTH_TOKEN` is in your `.env` (you already did this in Step 8).
+This checks everything before you start the server:
 
-The server logs the public URL on startup. You can also check it at `GET /api/ngrok/status`.
+```bash
+node check-setup.js
+```
+
+Expected output:
+```
+  ✓  node
+  ✓  npm
+  ✓  pm2
+  ✓  ngrok
+  ✓  DATABASE_URL is set
+  ✓  JWT_SECRET is set
+  ✓  NGROK_AUTH_TOKEN is set
+  ✓  DNS resolves google.com
+  ✓  DNS resolves neon.tech
+  ✓  DNS resolves connect.ngrok-agent.com
+  ✓  PostgreSQL connection successful
+```
+
+Fix any `✗` failures before continuing. `⚠` warnings are optional features.
 
 ---
 
-## Step 10 — Test the server
-
-Run it in the foreground first to check for errors:
+## Step 12 — Start the server
 
 ```bash
 node server.js
 ```
 
-You should see:
+Expected output (in order):
 
 ```
 [DB] Schema initialized
 [Server] Running on port 3001
 [Server] API base: http://localhost:3001/api
-[Ngrok] Tunnel started: https://abc123.ngrok-free.app
+[Ngrok] Waiting for tunnel...
+[Ngrok] t=... lvl=info msg="client session established"
+[Ngrok] t=... lvl=info msg="started tunnel" url=https://xxxx.ngrok-free.app
+[Ngrok] ✓ Tunnel active: https://xxxx.ngrok-free.app
+[Ngrok]   Set VITE_API_URL=https://xxxx.ngrok-free.app in Vercel
 ```
 
-Test the health endpoint:
-
+Test it:
 ```bash
 curl http://localhost:3001/api/health
-# {"status":"ok","time":"2026-..."}
+# {"status":"ok","time":"..."}
 ```
 
-Stop it with `Ctrl+C` once confirmed.
+Stop with `Ctrl+C` once confirmed.
 
 ---
 
-## Step 11 — Run with PM2 (production)
+## Step 13 — Run with PM2 (production)
 
 ```bash
 pm2 start ecosystem.config.js
 pm2 save
 ```
 
-Set PM2 to auto-start on device boot:
-
+Auto-start on device boot:
 ```bash
 pm2 startup
-# Copy and run the command it outputs, then:
+# Run the command it prints, then:
 pm2 save
 ```
 
-Useful PM2 commands:
-
+Useful commands:
 ```bash
-pm2 list                      # see all processes
-pm2 logs hosting-backend      # tail the server logs
-pm2 restart hosting-backend   # restart after code changes
-pm2 stop hosting-backend      # stop the server
-pm2 delete hosting-backend    # remove from PM2
+pm2 list                       # see all processes
+pm2 logs hosting-backend       # live log output
+pm2 restart hosting-backend    # after code changes
+pm2 stop hosting-backend       # stop
+pm2 delete hosting-backend     # remove from PM2
 ```
 
 ---
 
-## Step 12 — Keep Termux alive
+## Step 14 — Keep Termux alive
 
-Android aggressively kills background apps. Do at least one of these:
+Android kills background apps aggressively. Use at least one of these:
 
-**Option A — Wakelock (simplest):**
+**Option A — Wakelock:**
 ```bash
 termux-wake-lock
 ```
@@ -240,32 +274,32 @@ mkdir -p ~/.termux/boot
 cat > ~/.termux/boot/start.sh << 'EOF'
 #!/data/data/com.termux/files/usr/bin/sh
 termux-wake-lock
-cd ~/termuxhost/backend
+cd ~/codifyX/backend
 pm2 resurrect
 EOF
 chmod +x ~/.termux/boot/start.sh
 ```
 
-**Option C — Battery optimization:**
-Go to Android Settings → Battery → find Termux → set to "Unrestricted" or "Don't optimize".
+**Option C — Battery settings:**
+Android Settings → Battery → Termux → set to **Unrestricted** or **Don't optimize**.
 
 ---
 
-## Step 13 — Connect the frontend
+## Step 15 — Connect the frontend
 
-The Ngrok URL printed on startup is your `VITE_API_URL`. Copy it and set it in your Vercel environment variables.
+Copy the Ngrok URL from the startup log and set it in Vercel as `VITE_API_URL`.
 
-See [VERCEL_DEPLOY.md](./VERCEL_DEPLOY.md) for the full frontend setup.
+See [VERCEL_DEPLOY.md](./VERCEL_DEPLOY.md) for the full Vercel setup.
 
 ---
 
-## Updating the Backend
+## Updating
 
 ```bash
-cd ~/termuxhost
+cd ~/codifyX
 git pull
 cd backend
-npm install          # only needed if package.json changed
+npm install        # only if package.json changed
 pm2 restart hosting-backend
 ```
 
@@ -275,14 +309,15 @@ pm2 restart hosting-backend
 
 | Problem | Fix |
 |---------|-----|
-| `Cannot find module 'express'` | Run `npm install` in the `/backend` folder |
-| `DATABASE_URL not set` or DB errors | Check your `.env`, make sure the Neon URL is correct and includes `?sslmode=require` |
-| `NVIDIA_API_KEY not configured` | Add `NVIDIA_API_KEY` to `.env`, get one at build.nvidia.com |
-| `ngrok: command not found` | Follow Step 4b — download the ngrok binary manually |
-| Ngrok auth error | Check `NGROK_AUTH_TOKEN` in `.env`; get your token at dashboard.ngrok.com |
-| `PM2 not found` | Run `npm install -g pm2` |
-| Port already in use | Change `PORT` in `.env` to something else (e.g. `3002`) |
-| Email verification not sending | Make sure `EMAIL_USER` and `EMAIL_PASS` are set; use a Gmail **App Password**, not your account password |
-| Termux process killed by Android | Set battery optimization to "Unrestricted" for Termux; use `termux-wake-lock` |
-| `pm2 resurrect` fails on boot | Run `pm2 save` after starting the server to snapshot the process list |
-| Frontend can't reach backend | Make sure Ngrok is running — check `GET /api/ngrok/status` — and that `VITE_API_URL` in Vercel matches the current Ngrok URL |
+| DNS errors (`[::1]:53 connection refused`) | Step 3 — run the two `echo nameserver` commands |
+| `Cannot find module 'express'` | `npm install` in the `backend/` folder |
+| `[DB] Failed to initialize` | Check `DATABASE_URL` in `.env` — must include `?sslmode=require` |
+| `ngrok: command not found` | Step 6 — download the ARM binary manually |
+| `[Ngrok] Auth error` | Check `NGROK_AUTH_TOKEN` in `.env` at dashboard.ngrok.com |
+| `[Ngrok] Timed out` | Run `node check-setup.js` — almost always a DNS issue (Step 3) |
+| `PM2 not found` | `npm install -g pm2` |
+| Port already in use | Change `PORT` in `.env` |
+| Email not sending | Use a Gmail **App Password**, not account password |
+| Termux killed by Android | Battery → Termux → Unrestricted; use `termux-wake-lock` |
+| `pm2 resurrect` fails on boot | Run `pm2 save` after the server starts successfully |
+| Frontend can't reach backend | Ngrok URL changed — update `VITE_API_URL` in Vercel |

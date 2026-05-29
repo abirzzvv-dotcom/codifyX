@@ -8,24 +8,34 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function printDnsFix() {
+  console.error("[Ngrok] ─────────────────────────────────────────────────────");
+  console.error("[Ngrok] DNS ERROR: Termux cannot resolve ngrok hostnames.");
+  console.error("[Ngrok] This is a Termux DNS misconfiguration — not a code bug.");
+  console.error("[Ngrok]");
+  console.error("[Ngrok] Run these two commands in Termux, then restart:");
+  console.error("[Ngrok]");
+  console.error('[Ngrok]   echo "nameserver 8.8.8.8" > $PREFIX/etc/resolv.conf');
+  console.error('[Ngrok]   echo "nameserver 8.8.4.4" >> $PREFIX/etc/resolv.conf');
+  console.error("[Ngrok]");
+  console.error("[Ngrok] Then verify DNS works:  ping -c1 connect.ngrok-agent.com");
+  console.error("[Ngrok] ─────────────────────────────────────────────────────");
+}
+
 async function startNgrok(port) {
   if (!process.env.NGROK_AUTH_TOKEN) {
     console.warn("[Ngrok] NGROK_AUTH_TOKEN not set — skipping tunnel");
     return null;
   }
 
-  // Kill any existing ngrok http process cleanly
   try { execSync("pkill -f 'ngrok http'", { stdio: "ignore" }); } catch (_) {}
   await sleep(800);
 
   const env = {
     ...process.env,
-    // ngrok v3 reads NGROK_AUTHTOKEN (no underscore between AUTH and TOKEN)
     NGROK_AUTHTOKEN: process.env.NGROK_AUTH_TOKEN,
   };
 
-  // --log=stdout makes ngrok write structured log lines to stdout instead of
-  // opening an interactive TUI. The "started tunnel" line contains the URL.
   ngrokProcess = spawn("ngrok", ["http", String(port), "--log=stdout"], {
     env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -33,6 +43,8 @@ async function startNgrok(port) {
 
   return new Promise((resolve) => {
     let settled = false;
+    let dnsErrorSeen = false;
+    let authErrorSeen = false;
 
     function finish(url) {
       if (settled) return;
@@ -44,36 +56,61 @@ async function startNgrok(port) {
       resolve(url);
     }
 
-    // Parse every line ngrok writes to stdout
     let buffer = "";
     ngrokProcess.stdout.on("data", (chunk) => {
       buffer += chunk.toString();
       const lines = buffer.split("\n");
-      buffer = lines.pop(); // keep incomplete last line
+      buffer = lines.pop();
 
       for (const line of lines) {
         if (!line.trim()) continue;
 
-        // Log the raw line so the user can see what ngrok is saying
-        console.log("[Ngrok]", line.trim());
+        // Suppress noise — only show meaningful lines
+        const isNoise =
+          line.includes("no configuration paths supplied") ||
+          line.includes("FIPS 140") ||
+          line.includes("failed to check for update") ||
+          line.includes("unable to check interfaces");
 
-        // ngrok text format:  msg="started tunnel" url=https://xxxx.ngrok-free.app
-        // ngrok json format:  {"msg":"started tunnel","url":"https://..."}
+        if (!isNoise) {
+          console.log("[Ngrok]", line.trim());
+        }
+
+        // ── Tunnel URL ──────────────────────────────────────────────────
         const urlMatch =
           line.match(/\burl=(https?:\/\/\S+)/) ||
           line.match(/"url"\s*:\s*"(https?:\/\/[^"]+)"/) ||
           line.match(/Forwarding\s+(https?:\/\/\S+)/);
 
         if (urlMatch) {
-          console.log(`[Ngrok] Tunnel active: ${urlMatch[1]}`);
+          console.log(`[Ngrok] ✓ Tunnel active: ${urlMatch[1]}`);
+          console.log(`[Ngrok]   Set VITE_API_URL=${urlMatch[1]} in Vercel`);
           finish(urlMatch[1]);
+          return;
         }
 
-        // Surface auth and connection errors immediately
-        if (/ERR_NGROK_\d+/.test(line) || /authentication failed/i.test(line)) {
-          const code = (line.match(/ERR_NGROK_(\d+)/) || [])[0] || "";
-          console.error(`[Ngrok] Auth/connection error ${code} — check NGROK_AUTH_TOKEN`);
+        // ── DNS failure ─────────────────────────────────────────────────
+        if (!dnsErrorSeen && (
+          line.includes("connection refused") && line.includes(":53") ||
+          line.includes("lookup connect.ngrok-agent.com")
+        )) {
+          dnsErrorSeen = true;
+          printDnsFix();
           finish(null);
+          return;
+        }
+
+        // ── Auth failure ────────────────────────────────────────────────
+        if (!authErrorSeen && (
+          line.includes("ERR_NGROK_105") ||
+          line.includes("authentication failed") ||
+          line.includes("invalid tunnel authtoken")
+        )) {
+          authErrorSeen = true;
+          console.error("[Ngrok] Auth error — check NGROK_AUTH_TOKEN in your .env");
+          console.error("[Ngrok] Get your token at: https://dashboard.ngrok.com/get-started/your-authtoken");
+          finish(null);
+          return;
         }
       }
     });
@@ -85,28 +122,29 @@ async function startNgrok(port) {
 
     ngrokProcess.on("error", (err) => {
       console.error("[Ngrok] Could not start process:", err.message);
-      console.error("[Ngrok] Verify ngrok is in PATH: run `which ngrok`");
+      if (err.code === "ENOENT") {
+        console.error("[Ngrok] ngrok binary not found — follow Step 4b in TERMUX_SETUP.md");
+      }
       finish(null);
     });
 
     ngrokProcess.on("exit", (code, signal) => {
       if (signal === "SIGTERM" || signal === "SIGKILL") return;
       if (!settled) {
-        console.error(`[Ngrok] Process exited (code=${code}) before tunnel was ready`);
+        console.error(`[Ngrok] Exited (code=${code}) before tunnel was established`);
         finish(null);
-      } else if (code !== 0 && code !== null) {
+      } else if (code !== 0 && code !== null && !dnsErrorSeen && !authErrorSeen) {
         connected = false;
         currentUrl = null;
-        console.warn(`[Ngrok] Tunnel closed (code=${code}) — retrying in 15s`);
+        console.warn(`[Ngrok] Tunnel closed — retrying in 15s`);
         setTimeout(() => startNgrok(port), 15000);
       }
     });
 
-    // Hard timeout: if we haven't seen a URL after 60s, give up
     setTimeout(() => {
       if (!settled) {
-        console.error("[Ngrok] No tunnel URL seen after 60s");
-        console.error("[Ngrok] Tip: run `ngrok http " + port + "` manually and check for errors");
+        console.error("[Ngrok] Timed out after 60s — no tunnel URL received");
+        console.error("[Ngrok] Try running `ngrok http " + port + "` manually to see what fails");
         finish(null);
       }
     }, 60000);
