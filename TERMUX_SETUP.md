@@ -61,6 +61,33 @@ pm2 --version
 
 ---
 
+## Step 4b — Install the ngrok binary
+
+The backend spawns `ngrok` as a CLI command — **do not** use `npm install ngrok`. Instead install the real binary:
+
+```bash
+# Download the ARM64 binary (most modern Android devices)
+cd ~
+curl -o ngrok.tgz https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz
+tar xzf ngrok.tgz
+mv ngrok $PREFIX/bin/ngrok
+chmod +x $PREFIX/bin/ngrok
+rm ngrok.tgz
+```
+
+If your device is 32-bit ARM:
+```bash
+curl -o ngrok.tgz https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm.tgz
+```
+
+Verify:
+```bash
+ngrok version
+# ngrok version 3.x.x
+```
+
+---
+
 ## Step 5 — (Optional) Install Python
 
 Only needed if you want to host Python projects.
@@ -131,11 +158,11 @@ Save with `Ctrl+O`, exit with `Ctrl+X`.
 
 ---
 
-## Step 9 — Set up Ngrok
+## Step 9 — Configure Ngrok auth
 
-Ngrok is handled automatically by the server — just make sure your `NGROK_AUTH_TOKEN` is in `.env`.
+The server spawns the `ngrok` binary automatically — no separate setup needed. Just make sure `NGROK_AUTH_TOKEN` is in your `.env` (you already did this in Step 8).
 
-The server will start Ngrok on boot and log the public URL. You can also check it in the dashboard UI.
+The server logs the public URL on startup. You can also check it at `GET /api/ngrok/status`.
 
 ---
 
@@ -251,7 +278,8 @@ pm2 restart hosting-backend
 | `Cannot find module 'express'` | Run `npm install` in the `/backend` folder |
 | `DATABASE_URL not set` or DB errors | Check your `.env`, make sure the Neon URL is correct and includes `?sslmode=require` |
 | `NVIDIA_API_KEY not configured` | Add `NVIDIA_API_KEY` to `.env`, get one at build.nvidia.com |
-| Ngrok auth error | Double-check `NGROK_AUTH_TOKEN` in `.env` |
+| `ngrok: command not found` | Follow Step 4b — download the ngrok binary manually |
+| Ngrok auth error | Check `NGROK_AUTH_TOKEN` in `.env`; get your token at dashboard.ngrok.com |
 | `PM2 not found` | Run `npm install -g pm2` |
 | Port already in use | Change `PORT` in `.env` to something else (e.g. `3002`) |
 | Email verification not sending | Make sure `EMAIL_USER` and `EMAIL_PASS` are set; use a Gmail **App Password**, not your account password |
