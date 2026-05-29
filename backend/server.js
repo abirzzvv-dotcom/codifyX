@@ -16,7 +16,7 @@ const adminRoutes = require("./src/routes/admin");
 const ngrokRoutes = require("./src/routes/ngrok");
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = parseInt(process.env.PORT) || 3001;
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
@@ -43,8 +43,9 @@ const PROJECTS_ROOT = path.resolve(process.env.PROJECTS_ROOT || "./data/projects
 fs.mkdirSync(PROJECTS_ROOT, { recursive: true });
 
 async function start() {
+  // Step 1 — Database
   if (!process.env.DATABASE_URL) {
-    console.warn("[DB] WARNING: DATABASE_URL not set. Database features will fail.");
+    console.warn("[DB] WARNING: DATABASE_URL not set — database features will fail");
   } else {
     try {
       await initDB();
@@ -53,16 +54,29 @@ async function start() {
     }
   }
 
-  app.listen(PORT, () => {
-    console.log(`[Server] Running on port ${PORT}`);
-    console.log(`[Server] API base: http://localhost:${PORT}/api`);
+  // Step 2 — Start Express, wait until listening
+  await new Promise((resolve) => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`[Server] Running on port ${PORT}`);
+      console.log(`[Server] API base: http://localhost:${PORT}/api`);
+      resolve();
+    });
   });
 
+  // Step 3 — Ngrok (after server is confirmed listening)
   if (process.env.NGROK_AUTH_TOKEN) {
     startNgrok(PORT).then((url) => {
-      if (url) console.log(`[Ngrok] Public: ${url}`);
+      if (url) {
+        console.log(`[Ngrok] Public URL: ${url}`);
+        console.log(`[Ngrok] Set VITE_API_URL=${url} in your Vercel project`);
+      }
     });
+  } else {
+    console.log("[Ngrok] Skipped — set NGROK_AUTH_TOKEN in .env to enable");
   }
 }
 
-start();
+start().catch((err) => {
+  console.error("[Fatal]", err.message);
+  process.exit(1);
+});

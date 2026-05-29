@@ -7,7 +7,7 @@ let ngrokProcess = null;
 
 function queryNgrokApi() {
   return new Promise((resolve, reject) => {
-    const req = http.get("http://localhost:4040/api/tunnels", (res) => {
+    const req = http.get("http://localhost:4040/api/tunnels", { timeout: 3000 }, (res) => {
       let data = "";
       res.on("data", (chunk) => (data += chunk));
       res.on("end", () => {
@@ -20,8 +20,8 @@ function queryNgrokApi() {
         }
       });
     });
-    req.on("error", reject);
-    req.setTimeout(3000, () => { req.destroy(); reject(new Error("timeout")); });
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => { req.destroy(); resolve(null); });
   });
 }
 
@@ -31,55 +31,104 @@ function sleep(ms) {
 
 async function startNgrok(port) {
   if (!process.env.NGROK_AUTH_TOKEN) {
-    console.warn("[Ngrok] NGROK_AUTH_TOKEN not set, skipping");
+    console.warn("[Ngrok] NGROK_AUTH_TOKEN not set — skipping tunnel");
     return null;
   }
 
+  // Kill any stale ngrok processes
   try { execSync("pkill -f 'ngrok http'", { stdio: "ignore" }); } catch (_) {}
-  await sleep(500);
+  await sleep(800);
 
-  const args = [
-    "http", String(port),
-    `--authtoken=${process.env.NGROK_AUTH_TOKEN}`,
-    "--log=stdout",
-    "--log-format=json",
-  ];
+  const env = {
+    ...process.env,
+    NGROK_AUTHTOKEN: process.env.NGROK_AUTH_TOKEN,
+  };
 
-  ngrokProcess = spawn("ngrok", args, { stdio: ["ignore", "pipe", "pipe"] });
-
-  ngrokProcess.on("error", (err) => {
-    console.error("[Ngrok] Failed to spawn:", err.message);
-    console.error("[Ngrok] Make sure ngrok is installed: https://ngrok.com/download");
+  ngrokProcess = spawn("ngrok", ["http", String(port), "--log=stdout", "--log-format=json"], {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
   });
 
-  ngrokProcess.on("exit", (code) => {
-    if (code !== 0 && code !== null) {
-      connected = false;
-      console.warn(`[Ngrok] Process exited (code ${code}), reconnecting in 10s...`);
-      setTimeout(() => startNgrok(port), 10000);
+  const errorLines = [];
+
+  ngrokProcess.stdout.on("data", (data) => {
+    for (const raw of data.toString().split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      try {
+        const entry = JSON.parse(line);
+        const msg = entry.msg || "";
+        const lvl = (entry.lvl || entry.level || "").toLowerCase();
+        if (lvl === "error" || lvl === "crit") {
+          errorLines.push(msg || line);
+          console.error("[Ngrok]", msg || line);
+        } else if (msg.includes("started tunnel") || msg.includes("client session")) {
+          console.log("[Ngrok] Agent ready");
+        }
+      } catch {
+        if (line.includes("error") || line.includes("ERR")) {
+          errorLines.push(line);
+          console.error("[Ngrok]", line);
+        }
+      }
     }
   });
 
-  for (let attempt = 0; attempt < 10; attempt++) {
-    await sleep(1000);
-    try {
-      const url = await queryNgrokApi();
-      if (url) {
-        currentUrl = url;
-        connected = true;
-        console.log(`[Ngrok] Public URL: ${url}`);
-        return url;
+  ngrokProcess.stderr.on("data", (data) => {
+    const msg = data.toString().trim();
+    if (msg) {
+      errorLines.push(msg);
+      console.error("[Ngrok stderr]", msg);
+    }
+  });
+
+  ngrokProcess.on("error", (err) => {
+    console.error("[Ngrok] Failed to spawn process:", err.message);
+    console.error("[Ngrok] Make sure ngrok is installed and in PATH");
+  });
+
+  ngrokProcess.on("exit", (code, signal) => {
+    if (signal === "SIGTERM" || signal === "SIGKILL") return;
+    connected = false;
+    currentUrl = null;
+    if (code !== 0 && code !== null) {
+      console.warn(`[Ngrok] Exited with code ${code} — retrying in 15s`);
+      if (errorLines.length > 0) {
+        console.error("[Ngrok] Last errors:", errorLines.slice(-3).join(" | "));
       }
-    } catch (_) {}
+      setTimeout(() => startNgrok(port), 15000);
+    }
+  });
+
+  // Poll the ngrok local API until the tunnel is up (up to 45 seconds)
+  console.log("[Ngrok] Waiting for tunnel...");
+  for (let i = 0; i < 45; i++) {
+    await sleep(1000);
+
+    if (ngrokProcess.exitCode !== null && ngrokProcess.exitCode !== 0) {
+      console.error("[Ngrok] Process exited early — check auth token and ngrok installation");
+      return null;
+    }
+
+    const url = await queryNgrokApi();
+    if (url) {
+      currentUrl = url;
+      connected = true;
+      console.log(`[Ngrok] Tunnel active: ${url}`);
+      return url;
+    }
   }
 
-  console.error("[Ngrok] Timed out waiting for tunnel — check your NGROK_AUTH_TOKEN and that ngrok is installed");
+  console.error("[Ngrok] Timed out after 45s waiting for tunnel");
+  if (errorLines.length > 0) {
+    console.error("[Ngrok] Errors seen:", errorLines.slice(-5).join(" | "));
+  }
   return null;
 }
 
 function stopNgrok() {
   if (ngrokProcess) {
-    ngrokProcess.kill();
+    ngrokProcess.kill("SIGTERM");
     ngrokProcess = null;
   }
   connected = false;
