@@ -1,114 +1,260 @@
 # Termux Setup Guide
 
-## 1. Install Termux
+This guide walks you through turning your Android device into a backend server running TermuxHost.
 
-Download from [F-Droid](https://f-droid.org/packages/com.termux/) (not Play Store).
+---
 
-## 2. Update Termux
+## Prerequisites
+
+- Android device (Android 7+)
+- Termux installed from **[F-Droid](https://f-droid.org/packages/com.termux/)** — do **not** use the Play Store version, it is outdated
+- A [Neon](https://neon.tech) account (free PostgreSQL)
+- A [Ngrok](https://ngrok.com) account (free tunnel)
+- A [build.nvidia.com](https://build.nvidia.com) API key (free, for AI features)
+
+---
+
+## Step 1 — Install Termux from F-Droid
+
+1. Open F-Droid → search "Termux" → install
+2. Open Termux
+
+---
+
+## Step 2 — Update packages
 
 ```bash
 pkg update && pkg upgrade -y
 ```
 
-## 3. Install Dependencies
+---
+
+## Step 3 — Install Node.js and Git
 
 ```bash
 pkg install nodejs git -y
+```
+
+Verify:
+
+```bash
+node --version   # v20+
+npm --version
+git --version
+```
+
+---
+
+## Step 4 — Install PM2 globally
+
+PM2 keeps your projects running and auto-restarts them on crash.
+
+```bash
 npm install -g pm2
 ```
 
-To enable email features (optional):
+Verify:
+
+```bash
+pm2 --version
+```
+
+---
+
+## Step 5 — (Optional) Install Python
+
+Only needed if you want to host Python projects.
+
 ```bash
 pkg install python -y
+pip install --upgrade pip
 ```
 
-## 4. Clone or Copy the Backend
+---
 
-**Option A — Copy from this repo:**
-Copy the `/backend` folder to your Termux home directory.
+## Step 6 — Get the backend onto your device
 
-**Option B — Git:**
+**Option A — Clone from GitHub:**
+
 ```bash
-git clone <your-repo-url>
-cd <repo>/backend
+git clone https://github.com/YOUR_USERNAME/termuxhost.git
+cd termuxhost/backend
 ```
 
-## 5. Install Node Packages
+**Option B — Copy the `/backend` folder manually** using a file manager or `adb push`.
+
+---
+
+## Step 7 — Install Node dependencies
 
 ```bash
-cd ~/backend
+cd ~/termuxhost/backend   # or wherever your backend folder is
 npm install
 ```
 
-## 6. Create Your .env File
+---
+
+## Step 8 — Create your `.env` file
 
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-Fill in:
-- `DATABASE_URL` — your Neon PostgreSQL URL
-- `JWT_SECRET` — a long random string
-- `EMAIL_USER` / `EMAIL_PASS` — Gmail + App Password
-- `NGROK_AUTH_TOKEN` — from ngrok.com/dashboard
-- `NVIDIA_API_KEY` — from build.nvidia.com (for AI features)
+Fill in the values:
 
-## 7. Set Up Ngrok
+```env
+# Database — get this from neon.tech → your project → Connection string
+DATABASE_URL=postgresql://user:password@ep-xxx.neon.tech/neondb?sslmode=require
 
-```bash
-npm install -g ngrok
-ngrok config add-authtoken YOUR_TOKEN
+# Auth — generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+JWT_SECRET=your-long-random-secret-here
+JWT_EXPIRES_IN=7d
+
+# Server
+PORT=3001
+PROJECTS_ROOT=./data/projects
+
+# Ngrok — get from dashboard.ngrok.com
+NGROK_AUTH_TOKEN=your_ngrok_authtoken_here
+
+# NVIDIA AI — get from build.nvidia.com
+NVIDIA_API_KEY=nvapi-xxxxxxxxxxxx
+
+# Gmail SMTP — use an App Password, not your account password
+# Google Account → Security → 2-Step Verification → App passwords
+EMAIL_USER=youremail@gmail.com
+EMAIL_PASS=xxxx xxxx xxxx xxxx
 ```
 
-Or just put `NGROK_AUTH_TOKEN` in your `.env` — the server handles it automatically.
+Save with `Ctrl+O`, exit with `Ctrl+X`.
 
-## 8. Start the Server
+---
 
-**Development (foreground):**
+## Step 9 — Set up Ngrok
+
+Ngrok is handled automatically by the server — just make sure your `NGROK_AUTH_TOKEN` is in `.env`.
+
+The server will start Ngrok on boot and log the public URL. You can also check it in the dashboard UI.
+
+---
+
+## Step 10 — Test the server
+
+Run it in the foreground first to check for errors:
+
 ```bash
 node server.js
 ```
 
-**Production with PM2 (recommended):**
-```bash
-pm2 start ecosystem.config.js
-pm2 save
-pm2 startup
+You should see:
+
+```
+[DB] Schema initialized
+[Server] Running on port 3001
+[Server] API base: http://localhost:3001/api
+[Ngrok] Tunnel started: https://abc123.ngrok-free.app
 ```
 
-The server starts on port 3001 by default.
-Ngrok will print a public URL — use that as `VITE_API_URL` in your frontend.
-
-## 9. Verify It Works
+Test the health endpoint:
 
 ```bash
 curl http://localhost:3001/api/health
+# {"status":"ok","time":"2026-..."}
 ```
 
-Should return: `{"status":"ok","time":"..."}`
+Stop it with `Ctrl+C` once confirmed.
 
-## 10. Keep Termux Running
+---
 
-- Use **Termux:Boot** to auto-start PM2 on device boot.
-- Acquire a wakelock: `termux-wake-lock`
-- Or use a persistent notification to keep Termux alive.
+## Step 11 — Run with PM2 (production)
+
+```bash
+pm2 start ecosystem.config.js
+pm2 save
+```
+
+Set PM2 to auto-start on device boot:
+
+```bash
+pm2 startup
+# Copy and run the command it outputs, then:
+pm2 save
+```
+
+Useful PM2 commands:
+
+```bash
+pm2 list                      # see all processes
+pm2 logs hosting-backend      # tail the server logs
+pm2 restart hosting-backend   # restart after code changes
+pm2 stop hosting-backend      # stop the server
+pm2 delete hosting-backend    # remove from PM2
+```
+
+---
+
+## Step 12 — Keep Termux alive
+
+Android aggressively kills background apps. Do at least one of these:
+
+**Option A — Wakelock (simplest):**
+```bash
+termux-wake-lock
+```
+
+**Option B — Termux:Boot (recommended):**
+1. Install [Termux:Boot](https://f-droid.org/packages/com.termux.boot/) from F-Droid
+2. Open it once to register the boot receiver
+3. Create the auto-start script:
+
+```bash
+mkdir -p ~/.termux/boot
+cat > ~/.termux/boot/start.sh << 'EOF'
+#!/data/data/com.termux/files/usr/bin/sh
+termux-wake-lock
+cd ~/termuxhost/backend
+pm2 resurrect
+EOF
+chmod +x ~/.termux/boot/start.sh
+```
+
+**Option C — Battery optimization:**
+Go to Android Settings → Battery → find Termux → set to "Unrestricted" or "Don't optimize".
+
+---
+
+## Step 13 — Connect the frontend
+
+The Ngrok URL printed on startup is your `VITE_API_URL`. Copy it and set it in your Vercel environment variables.
+
+See [VERCEL_DEPLOY.md](./VERCEL_DEPLOY.md) for the full frontend setup.
+
+---
 
 ## Updating the Backend
 
 ```bash
-cd ~/backend
-git pull   # or copy new files
-npm install
+cd ~/termuxhost
+git pull
+cd backend
+npm install          # only needed if package.json changed
 pm2 restart hosting-backend
 ```
+
+---
 
 ## Troubleshooting
 
 | Problem | Fix |
-|---|---|
-| `Cannot find module 'express'` | Run `npm install` in `/backend` |
-| DB connection error | Check `DATABASE_URL` in `.env`, ensure Neon allows your IP |
-| Ngrok auth error | Run `ngrok config add-authtoken YOUR_TOKEN` |
-| PM2 not found | Run `npm install -g pm2` |
-| Port already in use | Change `PORT` in `.env` |
+|---------|-----|
+| `Cannot find module 'express'` | Run `npm install` in the `/backend` folder |
+| `DATABASE_URL not set` or DB errors | Check your `.env`, make sure the Neon URL is correct and includes `?sslmode=require` |
+| `NVIDIA_API_KEY not configured` | Add `NVIDIA_API_KEY` to `.env`, get one at build.nvidia.com |
+| Ngrok auth error | Double-check `NGROK_AUTH_TOKEN` in `.env` |
+| `PM2 not found` | Run `npm install -g pm2` |
+| Port already in use | Change `PORT` in `.env` to something else (e.g. `3002`) |
+| Email verification not sending | Make sure `EMAIL_USER` and `EMAIL_PASS` are set; use a Gmail **App Password**, not your account password |
+| Termux process killed by Android | Set battery optimization to "Unrestricted" for Termux; use `termux-wake-lock` |
+| `pm2 resurrect` fails on boot | Run `pm2 save` after starting the server to snapshot the process list |
+| Frontend can't reach backend | Make sure Ngrok is running — check `GET /api/ngrok/status` — and that `VITE_API_URL` in Vercel matches the current Ngrok URL |
